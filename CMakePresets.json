@@ -1,0 +1,41 @@
+{
+    "version": 2,
+    "configurePresets": [
+        {
+            "name": "common-flags",
+            "hidden": true,
+            "generator": "Ninja",
+            "cacheVariables": {
+              "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+              "CMAKE_C_COMPILER": "cc"
+            }
+        },
+        {
+            "name": "debug",
+            "displayName": "Debug preset",
+            "description": "Enables debugging flags",
+            "binaryDir": "${sourceDir}/build/${presetName}",
+            "inherits": [
+                "common-flags"
+            ],
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "CMAKE_C_FLAGS": "-O0 -fno-pie -ggdb -Wno-incompatible-pointer-types -Wno-discarded-qualifiers",
+                "CMAKE_EXE_LINKER_FLAGS": "-no-pie"
+            }
+        },
+        {
+            "name": "release",
+            "displayName": "Release",
+            "description": "Fully featured Release build",
+            "binaryDir": "${sourceDir}/build/${presetName}",
+            "inherits": [
+              "common-flags"
+            ],
+            "cacheVariables": {
+              "CMAKE_BUILD_TYPE": "Release",
+              "CMAKE_C_FLAGS": "-Wall -Wno-incompatible-pointer-types -Wno-discarded-qualifiers"
+            }
+        }
+    ]
+}
