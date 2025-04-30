@@ -1,4 +1,4 @@
 #pragma once
 #include "game/game.h"
 
-int game_run_client(size_t max_tries);
+int game_run_client(int serverfd, int clientfd, size_t max_tries);

@@ -2,6 +2,7 @@
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "status.h"
 #include "game/game.h"
@@ -19,11 +20,7 @@ static void game_init(guess_number_t *game)
     game->answer = game->range.bottom + rand() % (game->range.top - game->range.bottom + 1);
 }
 
-#ifdef PIPE2_MESSAGING
-int game_run_server(int pipe_serverfd, int pipe_clientfd, size_t max_tries)
-#else
-int game_run_server(size_t max_tries)
-#endif
+int game_run_server(int serverfd, int clientfd, size_t max_tries)
 {
     guess_number_t game;
     net_message_t message;
@@ -34,25 +31,16 @@ int game_run_server(size_t max_tries)
     printf("%s Game initiated with range [%i; %i] and answer=%i\n",
            INFO, game.range.bottom, game.range.top, game.answer);
 
-#ifdef PIPE2_MESSAGING
-    if (game_send_client_settings(
-        pipe_clientfd, (game_client_settings_t *)&game) != me_success)
-#else
-    if ()
-#endif
+    if (game_send_client_settings(clientfd, (game_client_settings_t*)&game) != me_success)
     {
-        fprintf(stderr, "%s %s:Sending range:\t%s\n", strerror(errno));
+        fprintf(stderr, "%s Sending range:\t%s\n", ERROR, strerror(errno));
         return -1;
     }
 
     do
     {
         printf("%s Client try #%i\n", INFO, max_tries - game.tries);
-#ifdef PIPE2_MESSAGING
-        if (game_receive_guess(client->_socket_descriptor, &game.guess) != me_success)
-#else
-        if ()
-#endif
+        if (game_receive_guess(clientfd, &game.guess) != me_success)
         {
             fprintf(stderr, "%s Receiving client guess:\t%s\n",
                     WARNING, strerror(errno));
@@ -66,12 +54,8 @@ int game_run_server(size_t max_tries)
             answer = a_more;
         else
             answer = game.guess - game.answer ? a_less : a_right;
-            
-#ifdef PIPE2_MESSAGING
-        if (game_send_answer(client->_socket_descriptor, answer) != me_success)
-#else
-        if ()
-#endif
+
+        if (game_send_answer(clientfd, answer) != me_success)
         {
             fprintf(stderr, "%s Sending answer:\t%s\n", ERROR, strerror(errno));
             break;
