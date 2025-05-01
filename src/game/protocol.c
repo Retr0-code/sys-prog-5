@@ -88,7 +88,6 @@ int message_receive(int fd, int type, size_t data_length, char **data)
 static sigset_t *sigset_operational = NULL;
 static sem_t *semaphore = NULL;
 static int semaphore_closed = 0;
-static int semaphore_fd = -1;
 
 int semaphore_init(const char *file, pid_t cpid)
 {
@@ -104,9 +103,14 @@ int semaphore_init(const char *file, pid_t cpid)
 
 int semaphore_close(const char *file)
 {
-    sem_unlink(file);
-    sem_close(semaphore);
-    sem_destroy(semaphore);
+    if (semaphore_closed != 0)
+    {
+        sem_unlink(file);
+        sem_close(semaphore);
+        sem_destroy(semaphore);
+        semaphore_closed = 1;
+    }
+
     return 0;
 }
 
@@ -137,7 +141,7 @@ int thrd_sigwaitinfo(sigwaitinfo_args *args)
 
 int message_send(int pid, int type, size_t data_length, const char *data)
 {
-    if (data_length == 0 && data != NULL || data_length != 0 && data == NULL)
+    if ((data_length == 0 && data != NULL) || (data_length != 0 && data == NULL))
     {
         errno = EINVAL;
         return me_invalid_args;

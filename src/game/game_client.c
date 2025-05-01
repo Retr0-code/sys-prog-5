@@ -7,6 +7,7 @@
 #include "status.h"
 #include "game/game.h"
 
+// TODO: binary search
 void guess_function(const range_t *range, int *guess)
 {
     *guess = range->bottom + rand() % (range->top - range->bottom + 1);
@@ -35,7 +36,7 @@ int game_run_client(int serverfd, int clientfd, size_t max_tries)
             break;
         do
         {
-            printf("#%i tries left.\nGuess the number in range [%i; %i]> ",
+            printf("#%li tries left.\nGuess the number in range [%i; %i]> ",
                    game_settings.tries, game_settings.range.bottom, game_settings.range.top);
             guess_function(&game_settings.range, &guess);
             if (game_send_guess(serverfd, guess) != me_success)
