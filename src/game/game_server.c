@@ -23,8 +23,6 @@ static void game_init(guess_number_t *game)
 int game_run_server(int serverfd, int clientfd, size_t max_tries)
 {
     guess_number_t game;
-    net_message_t message;
-    int status = me_success;
 
     game_init(&game);
     game.tries = max_tries;
@@ -39,7 +37,7 @@ int game_run_server(int serverfd, int clientfd, size_t max_tries)
 
     do
     {
-        printf("%s Client try #%i\n", INFO, max_tries - game.tries);
+        printf("%s Client try #%li\n", INFO, max_tries - game.tries);
         if (game_receive_guess(clientfd, &game.guess) != me_success)
         {
             fprintf(stderr, "%s Receiving client guess:\t%s\n",
