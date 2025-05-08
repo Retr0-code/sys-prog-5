@@ -16,18 +16,40 @@
 
 #define SEMAPHORE_NAME "/guess_num_game"
 
+#ifdef PIPE2_MESSAGING
+static int serverfd[2];
+static int clientfd[2];
+#endif
+
 void graceful_stop(int singal)
 {
     semaphore_close(SEMAPHORE_NAME);
+#ifdef PIPE2_MESSAGING
+    close(serverfd[0]);
+    close(serverfd[1]);
+    close(clientfd[0]);
+    close(clientfd[1]);
+// #else
+//     semaphore_close(SEMAPHORE_NAME);
+#endif
     exit(0);
 }
 
 typedef int (*game_role_t)(pid_t, pid_t, size_t);
+#ifdef PIPE2_MESSAGING
+game_role_t game_role_swap(game_role_t current_role, uint8_t *index1, uint8_t *index2)
+#else
 game_role_t game_role_swap(game_role_t current_role, pid_t *pid1, pid_t *pid2)
+#endif
 {
+#ifdef PIPE2_MESSAGING
+    *index1 = !*index1;
+    *index2 = !*index2;
+#else
     pid_t temp = *pid1;
     *pid1 = *pid2;
     *pid2 = temp;
+#endif
 
     if (current_role == &game_run_server)
         return &game_run_client;
@@ -63,10 +85,23 @@ int main(int argc, char **argv)
         cycles = MAX_CYCLES;
     }
 
-    game_role_t role = &game_run_server;
+    game_role_t role = &game_run_server;    
+#ifndef PIPE2_MESSAGING
     pid_t ppid = getpid();
-
     sigset_init();
+#else
+    if (pipe(serverfd) == -1)
+    {
+        perror("server: pipe");
+        return -1;
+    }
+    if (pipe(clientfd) == -1)
+    {
+        perror("client: pipe");
+        return -1;
+    }
+    uint8_t pipe_read_index = 0, pipe_write_index = 1;
+#endif
 
     pid_t cpid = fork();
     switch (cpid)
@@ -75,22 +110,34 @@ int main(int argc, char **argv)
         perror("Error while forking");
         return -1;
     case 0:
+#ifdef PIPE2_MESSAGING
+        pipe_read_index = 1;
+        pipe_write_index = 0;
+#endif
         role = &game_run_client;
         break;
     }
     signals_add_handlers();
+
+// #ifndef PIPE2_MESSAGING
     if (semaphore_init(SEMAPHORE_NAME, cpid) == -1)
     {
         perror("semaphore_init");
         graceful_stop(0);
     }
+// #endif
 
     for (size_t i = 0; i < cycles; ++i)
     {
 #ifdef DEBUG
         printf("%s cycle: %lu\n", cpid ? "parent" : "child", i);
 #endif
+#ifdef PIPE2_MESSAGING
+        (*role)(serverfd[pipe_read_index], clientfd[pipe_write_index], max_attempts);
+        role = game_role_swap(role, &pipe_read_index, &pipe_write_index);
+#else
         (*role)(ppid, cpid, max_attempts);
         role = game_role_swap(role, &ppid, &cpid);
+#endif
     }
 }

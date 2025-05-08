@@ -13,7 +13,18 @@
 
 static void game_init(guess_number_t *game)
 {
-    srand(time(NULL));
+    uint32_t seed = 0;
+    FILE* dev_random = fopen("/dev/random", "r");
+    if (dev_random) {
+        if (fread(&seed, sizeof(seed), 1, dev_random) != 1)
+            seed = time(NULL);
+
+        fclose(dev_random);
+    }
+    else
+        seed = time(NULL);
+
+    srand(seed);
     int range = MIN_RANGE + rand() % MAX_RANGE;
     game->range.bottom = rand();
     game->range.top = game->range.bottom + range;
@@ -37,8 +48,8 @@ int game_run_server(int serverfd, int clientfd, size_t max_tries)
 
     do
     {
-        printf("%s Client try #%li\n", INFO, max_tries - game.tries);
-        if (game_receive_guess(clientfd, &game.guess) != me_success)
+        printf("%s Client try #%li\n", INFO, max_tries - game.tries + 1);
+        if (game_receive_guess(serverfd, &game.guess) != me_success)
         {
             fprintf(stderr, "%s Receiving client guess:\t%s\n",
                     WARNING, strerror(errno));

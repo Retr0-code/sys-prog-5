@@ -13,6 +13,9 @@
 
 #include "game/protocol.h"
 
+static sem_t *semaphore = NULL;
+static int semaphore_closed = 0;
+
 #ifdef PIPE2_MESSAGING
 int message_send(int fd, int type, size_t data_length, const char *data)
 {
@@ -29,16 +32,40 @@ int message_send(int fd, int type, size_t data_length, const char *data)
     }
 
     net_message_t message = {type, data_length, data};
-    if (send(fd, &message, sizeof(message) - sizeof(message.body), MSG_MORE) == -1)
+#ifdef DEBUG
+    printf("message_send: type: %i, length: %lu, data: %p\n", message.type, message.length, message.body);
+#endif
+    if (sem_wait(semaphore) == -1)
+        return me_send;
+
+    if (write(fd, &message, sizeof(message) - sizeof(message.body)) == -1)
         return me_send;
 
     if (data_length == 0)
         return me_success;
 
-    if (send(fd, message.body, message.length, 0) == -1)
+    if (sem_wait(semaphore) == -1)
+        return me_send;
+
+    if (write(fd, message.body, message.length) == -1)
         return me_send;
 
     return me_success;
+}
+
+typedef struct
+{
+    int fd;
+    void *data;
+    ssize_t sz;
+    int err;
+} read_args_t;
+
+ssize_t thrd_read(read_args_t *args)
+{
+    ssize_t status = read(args->fd, args->data, args->sz);
+    args->err = errno;
+    return status;
 }
 
 int message_receive(int fd, int type, size_t data_length, char **data)
@@ -49,10 +76,29 @@ int message_receive(int fd, int type, size_t data_length, char **data)
         return me_bad_fd;
     }
 
-    net_message_t message = {0, 0, NULL};
+    pthread_t read_thread;
     ssize_t status = 0;
-    if ((status = recv(fd, &message, sizeof(message) - sizeof(message.body), 0)) == -1)
+    int pthread_error = 0;
+    net_message_t message = {0, 0, NULL};
+
+    read_args_t args = {fd, &message, sizeof(message) - sizeof(message.body), 0};
+    if ((pthread_error = pthread_create(&read_thread, NULL, &thrd_read, &args)) != 0)
+    {
+        errno = pthread_error;
         return me_receive;
+    }
+
+    if (sem_post(semaphore) == -1)
+        return -1;
+
+    if (pthread_join(read_thread, &status) != 0 || status == -1)
+    {
+        errno = args.err;
+        return me_receive;
+    }
+
+    // if ((status = read(fd, &message, sizeof(message) - sizeof(message.body))) == -1)
+    //     return me_receive;
 
     if (status == 0)
         return me_peer_end;
@@ -70,13 +116,35 @@ int message_receive(int fd, int type, size_t data_length, char **data)
     if (message.body == NULL)
         return me_receive;
 
-    if ((status = recv(fd, message.body, message.length, 0)) == -1)
+    if ((pthread_error = pthread_create(&read_thread, NULL, &thrd_read, &args)) != 0)
     {
+        errno = pthread_error;
+        return me_receive;
+    }
+
+    if (sem_post(semaphore) == -1)
+        return -1;
+
+    if (pthread_join(read_thread, &status) != 0 || status == -1)
+    {
+        errno = args.err;
         if (data_length == 0)
             free(message.body);
 
         return me_receive;
     }
+
+    // if ((status = read(fd, message.body, message.length)) == -1)
+    // {
+    //     if (data_length == 0)
+    //         free(message.body);
+
+    //     return me_receive;
+    // }
+
+#ifdef DEBUG
+    printf("message_receive: type: %i, length: %lu, data: %p\n", message.type, message.length, message.body);
+#endif
 
     if (status == 0)
         return me_peer_end;
@@ -84,10 +152,10 @@ int message_receive(int fd, int type, size_t data_length, char **data)
     *data = message.body;
     return me_success;
 }
-#else
-static sigset_t *sigset_operational = NULL;
-static sem_t *semaphore = NULL;
-static int semaphore_closed = 0;
+// #else
+// static sigset_t *sigset_operational = NULL;
+// static sem_t *semaphore = NULL;
+// static int semaphore_closed = 0;
 
 int semaphore_init(const char *file, pid_t cpid)
 {
@@ -113,6 +181,8 @@ int semaphore_close(const char *file)
 
     return 0;
 }
+#else
+static sigset_t *sigset_operational = NULL;
 
 int sigset_init(void)
 {
@@ -130,9 +200,9 @@ typedef struct
     const sigset_t *set;
     siginfo_t *info;
     int err;
-} sigwaitinfo_args;
+} sigwaitinfo_args_t;
 
-int thrd_sigwaitinfo(sigwaitinfo_args *args)
+int thrd_sigwaitinfo(sigwaitinfo_args_t *args)
 {
     int status = sigwaitinfo(args->set, args->info);
     args->err = errno;
@@ -188,8 +258,8 @@ int message_send(int pid, int type, size_t data_length, const char *data)
 
     if (data_length == 0)
         return me_success;
-    
-    int *i32data = (int*)message.body;
+
+    int *i32data = (int *)message.body;
     for (size_t i = 0; i < data_length / sizeof(int); ++i)
     {
         if (sem_wait(semaphore) == -1)
@@ -232,7 +302,7 @@ int message_receive(int fd, int type, size_t data_length, char **data)
         return me_receive;
     }
 
-    sigwaitinfo_args args = { sigset_operational, &siginfo, 0 };
+    sigwaitinfo_args_t args = {sigset_operational, &siginfo, 0};
     if (pthread_create(&sigwait_thread, NULL, &thrd_sigwaitinfo, &args) != 0)
         return me_receive;
 
@@ -299,7 +369,7 @@ int message_receive(int fd, int type, size_t data_length, char **data)
             errno = args.err;
             return me_receive;
         }
-        
+
         i32data[i] = siginfo.si_value.sival_int;
 #ifdef DEBUG
         printf("sigwaitinfo \"chunk%i\" %i\n", i, i32data[i]);

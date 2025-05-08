@@ -6,6 +6,8 @@ project(guess-number VERSION 0.1)
 set(DIR_INCLUDE "include")
 set(DIR_SOURCE "src")
 
+option(PIPE2 "Enables pipe IPC" OFF)
+
 # Server variables
 set(SERVER_SRC
     ${DIR_SOURCE}/game/game.c
@@ -13,6 +15,10 @@ set(SERVER_SRC
     ${DIR_SOURCE}/game/game_client.c
     ${DIR_SOURCE}/game/protocol.c
 )
+
+if (${PIPE2})
+    add_compile_definitions(PIPE2_MESSAGING)
+endif()
 
 add_compile_options(-Wno-incompatible-pointer-types -Wno-discarded-qualifiers)
 
