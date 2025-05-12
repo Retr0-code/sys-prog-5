@@ -11,7 +11,7 @@
 #include "game/game.h"
 
 #define MAX_ATTEMPTS 5
-#define MAX_CYCLES   10
+#define MAX_CYCLES 10
 #define GAME_ROUNDS 10
 
 #define SEMAPHORE_NAME "/guess_num_game"
@@ -29,8 +29,6 @@ void graceful_stop(int singal)
     close(serverfd[1]);
     close(clientfd[0]);
     close(clientfd[1]);
-// #else
-//     semaphore_close(SEMAPHORE_NAME);
 #endif
     exit(0);
 }
@@ -72,7 +70,7 @@ int main(int argc, char **argv)
     }
 
     size_t max_attempts = 0;
-    if ((max_attempts = atoi(argv[1])) < 0)
+    if ((max_attempts = atoi(argv[1])) <= 0)
     {
         printf("%s Using default value for attempts (%i)\n", WARNING, MAX_ATTEMPTS);
         max_attempts = MAX_ATTEMPTS;
@@ -85,7 +83,7 @@ int main(int argc, char **argv)
         cycles = MAX_CYCLES;
     }
 
-    game_role_t role = &game_run_server;    
+    game_role_t role = &game_run_server;
 #ifndef PIPE2_MESSAGING
     pid_t ppid = getpid();
     sigset_init();
@@ -119,18 +117,17 @@ int main(int argc, char **argv)
     }
     signals_add_handlers();
 
-// #ifndef PIPE2_MESSAGING
     if (semaphore_init(SEMAPHORE_NAME, cpid) == -1)
     {
         perror("semaphore_init");
         graceful_stop(0);
     }
-// #endif
 
     for (size_t i = 0; i < cycles; ++i)
     {
 #ifdef DEBUG
-        printf("%s cycle: %lu\n", cpid ? "parent" : "child", i);
+        printf("%s cycle: %lu, role: %s\n", cpid ? "parent" : "child", i,
+            role == &game_run_server ? "server" : "client");
 #endif
 #ifdef PIPE2_MESSAGING
         (*role)(serverfd[pipe_read_index], clientfd[pipe_write_index], max_attempts);
@@ -140,4 +137,6 @@ int main(int argc, char **argv)
         role = game_role_swap(role, &ppid, &cpid);
 #endif
     }
+    graceful_stop(0);
+    return 0;
 }

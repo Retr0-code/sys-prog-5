@@ -9,14 +9,14 @@
 
 static range_t last_guess = {0, 0};
 
-void guess_function(const range_t *range, int *guess, int answer)
+static void guess_function(const range_t *range, int *guess, int answer)
 {
     if (last_guess.bottom == 0 && last_guess.top == 0)
     {
         last_guess.top = range->top;
         last_guess.bottom = range->bottom;
         *guess = last_guess.top;
-        return ;
+        return;
     }
 
     switch (answer)
@@ -30,8 +30,39 @@ void guess_function(const range_t *range, int *guess, int answer)
         last_guess.bottom = (*guess - last_guess.bottom) / 2 + last_guess.bottom;
         *guess = last_guess.bottom;
         break;
-    
+
     default:
+        break;
+    }
+}
+
+static void print_receiver_errors(int status)
+{
+    switch (status)
+    {
+    case me_receive:
+        fprintf(stderr, "%s Something went wrong while receiving:\t%s\n", ERROR, strerror(errno));
+        break;
+    case me_peer_end:
+        fprintf(stderr, "%s Server closed connection\n", ERROR);
+        break;
+    case me_bad_fd:
+        fprintf(stderr, "%s Receiver bad file descriptor\n", ERROR);
+        break;
+    case me_sync:
+        fprintf(stderr, "%s Receiver synchronization error:\t%s\n", ERROR, strerror(errno));
+        break;
+    case me_invalid_args:
+        fprintf(stderr, "%s Receiver invalid arguments\n", ERROR);
+        break;
+    case me_wrong_type:
+        fprintf(stderr, "%s Receiver got an unexpected message\n", ERROR);
+        break;
+    case me_wrong_length:
+        fprintf(stderr, "%s Receiver got broken payload\n", ERROR);
+        break;
+    default:
+        fprintf(stderr, "%s Receiver unknown error %i\n", ERROR, status);
         break;
     }
 }
@@ -45,19 +76,12 @@ int game_run_client(int serverfd, int clientfd, size_t max_tries)
     while (1)
     {
         status = game_receive_client_settings(clientfd, &game_settings);
-        switch (status)
-        {
-        case me_receive:
-            fprintf(stderr, "%s Something went wrong while receiving:\t%s\n", ERROR, strerror(errno));
-            break;
-        case me_peer_end:
-            fprintf(stderr, "%s Server closed connection\n", ERROR);
-            break;
-        default:
-            break;
-        }
         if (status != me_success)
-            break;
+        {
+            print_receiver_errors(status);
+            return 1;
+        }
+
         do
         {
             printf("#%li tries left.\nGuess the number in range [%i; %i]> \n",
@@ -66,13 +90,14 @@ int game_run_client(int serverfd, int clientfd, size_t max_tries)
             if (game_send_guess(serverfd, guess) != me_success)
             {
                 fprintf(stderr, "%s Something went wrong while sending:\t%s\n", ERROR, strerror(errno));
-                break;
+                return 2;
             }
 
-            if (game_receive_answer(clientfd, &answer) != me_success)
+            if ((status = game_receive_answer(clientfd, &answer)) != me_success)
             {
-                fprintf(stderr, "%s Something went wrong while receiving answer:\t%s\n", ERROR, strerror(errno));
-                break;
+                fprintf(stderr, "%s Something went wrong while receiving answer\n", ERROR);
+                print_receiver_errors(status);
+                return 3;
             }
 
             if (a_right == answer)

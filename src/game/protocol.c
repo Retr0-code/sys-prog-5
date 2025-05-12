@@ -8,154 +8,12 @@
 #include <string.h>
 #include <threads.h>
 #include <pthread.h>
-#include <sys/mman.h>
 #include <semaphore.h>
 
 #include "game/protocol.h"
 
 static sem_t *semaphore = NULL;
 static int semaphore_closed = 0;
-
-#ifdef PIPE2_MESSAGING
-int message_send(int fd, int type, size_t data_length, const char *data)
-{
-    if (data_length == 0 && data != NULL || data_length != 0 && data == NULL)
-    {
-        errno = EINVAL;
-        return me_invalid_args;
-    }
-
-    if (fd <= 0)
-    {
-        errno = EBADF;
-        return me_bad_fd;
-    }
-
-    net_message_t message = {type, data_length, data};
-#ifdef DEBUG
-    printf("message_send: type: %i, length: %lu, data: %p\n", message.type, message.length, message.body);
-#endif
-    if (sem_wait(semaphore) == -1)
-        return me_send;
-
-    if (write(fd, &message, sizeof(message) - sizeof(message.body)) == -1)
-        return me_send;
-
-    if (data_length == 0)
-        return me_success;
-
-    if (sem_wait(semaphore) == -1)
-        return me_send;
-
-    if (write(fd, message.body, message.length) == -1)
-        return me_send;
-
-    return me_success;
-}
-
-typedef struct
-{
-    int fd;
-    void *data;
-    ssize_t sz;
-    int err;
-} read_args_t;
-
-ssize_t thrd_read(read_args_t *args)
-{
-    ssize_t status = read(args->fd, args->data, args->sz);
-    args->err = errno;
-    return status;
-}
-
-int message_receive(int fd, int type, size_t data_length, char **data)
-{
-    if (fd <= 0)
-    {
-        errno = EBADF;
-        return me_bad_fd;
-    }
-
-    pthread_t read_thread;
-    ssize_t status = 0;
-    int pthread_error = 0;
-    net_message_t message = {0, 0, NULL};
-
-    read_args_t args = {fd, &message, sizeof(message) - sizeof(message.body), 0};
-    if ((pthread_error = pthread_create(&read_thread, NULL, &thrd_read, &args)) != 0)
-    {
-        errno = pthread_error;
-        return me_receive;
-    }
-
-    if (sem_post(semaphore) == -1)
-        return -1;
-
-    if (pthread_join(read_thread, &status) != 0 || status == -1)
-    {
-        errno = args.err;
-        return me_receive;
-    }
-
-    // if ((status = read(fd, &message, sizeof(message) - sizeof(message.body))) == -1)
-    //     return me_receive;
-
-    if (status == 0)
-        return me_peer_end;
-
-    if (type != message.type)
-        return me_wrong_type;
-
-    if (data_length != message.length && data_length)
-        return me_wrong_length;
-
-    if (message.length == 0)
-        return me_success;
-
-    message.body = data_length ? *data : malloc(message.length);
-    if (message.body == NULL)
-        return me_receive;
-
-    if ((pthread_error = pthread_create(&read_thread, NULL, &thrd_read, &args)) != 0)
-    {
-        errno = pthread_error;
-        return me_receive;
-    }
-
-    if (sem_post(semaphore) == -1)
-        return -1;
-
-    if (pthread_join(read_thread, &status) != 0 || status == -1)
-    {
-        errno = args.err;
-        if (data_length == 0)
-            free(message.body);
-
-        return me_receive;
-    }
-
-    // if ((status = read(fd, message.body, message.length)) == -1)
-    // {
-    //     if (data_length == 0)
-    //         free(message.body);
-
-    //     return me_receive;
-    // }
-
-#ifdef DEBUG
-    printf("message_receive: type: %i, length: %lu, data: %p\n", message.type, message.length, message.body);
-#endif
-
-    if (status == 0)
-        return me_peer_end;
-
-    *data = message.body;
-    return me_success;
-}
-// #else
-// static sigset_t *sigset_operational = NULL;
-// static sem_t *semaphore = NULL;
-// static int semaphore_closed = 0;
 
 int semaphore_init(const char *file, pid_t cpid)
 {
@@ -181,6 +39,189 @@ int semaphore_close(const char *file)
 
     return 0;
 }
+
+#ifdef PIPE2_MESSAGING
+int message_send(int fd, int type, size_t data_length, const char *data)
+{
+    if (data_length == 0 && data != NULL || data_length != 0 && data == NULL)
+    {
+        errno = EINVAL;
+        return me_invalid_args;
+    }
+
+    if (fd <= 0)
+    {
+        errno = EBADF;
+        return me_bad_fd;
+    }
+
+    net_message_t message = {type, data_length, data};
+#ifdef DEBUG
+    printf("message_send: type: %i, length: %lu, data: %p\n", message.type, message.length, message.body);
+#endif
+    // if (sem_wait(semaphore) == -1)
+    //     return me_sync;
+
+    if (write(fd, &message, sizeof(message) - sizeof(message.body)) == -1)
+        return me_send;
+
+    if (sem_post(semaphore) == -1)
+        return me_sync;
+
+    if (data_length == 0)
+        return me_success;
+
+    // if (sem_wait(semaphore) == -1)
+    //     return me_sync;
+
+    if (write(fd, message.body, message.length) == -1)
+        return me_send;
+
+    if (sem_post(semaphore) == -1)
+        return me_sync;
+
+#ifdef DEBUG
+    int sem_value = 0;
+    sem_getvalue(semaphore, &sem_value);
+    printf("send sem_locked: %i\n", sem_value);
+#endif
+
+    return me_success;
+}
+
+typedef struct
+{
+    int fd;
+    void *data;
+    size_t sz;
+    int err;
+} read_args_t;
+
+ssize_t thrd_read(read_args_t *args)
+{
+    ssize_t status = read(args->fd, args->data, args->sz);
+    args->err = errno;
+    return status;
+}
+
+int message_receive(int fd, int type, size_t data_length, char **data)
+{
+    if (fd <= 0)
+    {
+        errno = EBADF;
+        return me_bad_fd;
+    }
+
+    ssize_t status = 0;
+    // int pthread_error = 0;
+    // pthread_t read_thread;
+    net_message_t message = {0, 0, NULL};
+
+    // read_args_t args = {fd, &message, sizeof(message) - sizeof(message.body), 0};
+    // if ((pthread_error = pthread_create(&read_thread, NULL, &thrd_read, &args)) != 0)
+    // {
+    //     errno = pthread_error;
+    //     return me_receive;
+    // }
+
+    // if (sem_post(semaphore) == -1)
+    //     return me_sync;
+
+    // if (pthread_join(read_thread, &status) != 0 || status == -1)
+    // {
+    //     errno = args.err;
+    //     return me_receive;
+    // }
+    if (sem_wait(semaphore) == -1)
+        return me_sync;
+#ifdef DEBUG
+    int sem_value = 0;
+    sem_getvalue(semaphore, &sem_value);
+    printf("receive sem_unlocked: %i\n", sem_value);
+#endif
+
+    if ((status = read(fd, &message, sizeof(message) - sizeof(message.body))) == -1)
+        return me_receive;
+
+    if (status == 0)
+        return me_peer_end;
+
+#ifdef DEBUG
+    printf("message_receive: type: %i, length: %lu\n", message.type, message.length);
+#endif
+
+    if (type != message.type)
+        return me_wrong_type;
+
+    if (data_length != message.length && data_length)
+        return me_wrong_length;
+
+    if (message.length == 0)
+        return me_success;
+
+    message.body = data_length ? *data : malloc(message.length);
+    if (message.body == NULL)
+        return me_receive;
+
+    // args.data = message.body;
+    // args.sz = message.length;
+    // if ((pthread_error = pthread_create(&read_thread, NULL, &thrd_read, &args)) != 0)
+    // {
+    //     errno = pthread_error;
+    //     return me_receive;
+    // }
+
+    // if (sem_post(semaphore) == -1)
+    //     return me_sync;
+
+    // if (pthread_join(read_thread, &status) != 0 || status == -1)
+    // {
+    //     errno = args.err;
+    //     if (data_length == 0)
+    //         free(message.body);
+
+    //     return me_receive;
+    // }
+#ifdef DEBUG
+    sem_getvalue(semaphore, &sem_value);
+    printf("receive sem_locked: %i\n", sem_value);
+#endif
+    if (sem_wait(semaphore) == -1)
+    {
+        if (data_length == 0)
+            free(message.body);
+
+        return me_sync;
+    }
+#ifdef DEBUG
+    sem_getvalue(semaphore, &sem_value);
+    printf("receive sem_unlocked: %i\n", sem_value);
+#endif
+
+    if ((status = read(fd, message.body, message.length)) == -1)
+    {
+        if (data_length == 0)
+            free(message.body);
+
+        return me_receive;
+    }
+
+#ifdef DEBUG
+    printf("message_receive: data: %p\n", message.body);
+#endif
+
+    if (status == 0)
+    {
+        if (data_length == 0)
+            free(message.body);
+
+        return me_peer_end;
+    }
+
+    *data = message.body;
+    return me_success;
+}
+
 #else
 static sigset_t *sigset_operational = NULL;
 
@@ -232,7 +273,7 @@ int message_send(int pid, int type, size_t data_length, const char *data)
     printf("send sem_locked: %i\n", sem_value);
 #endif
     if (sem_wait(semaphore) == -1)
-        return me_send;
+        return me_sync;
 
 #ifdef DEBUG
     sem_getvalue(semaphore, &sem_value);
@@ -247,7 +288,7 @@ int message_send(int pid, int type, size_t data_length, const char *data)
 #endif
 
     if (sem_wait(semaphore) == -1)
-        return me_send;
+        return me_sync;
 
     if (sigqueue(pid, SIGUSR1, (sigval_t)(int)(message.length)) == -1)
         return me_send;
@@ -263,7 +304,7 @@ int message_send(int pid, int type, size_t data_length, const char *data)
     for (size_t i = 0; i < data_length / sizeof(int); ++i)
     {
         if (sem_wait(semaphore) == -1)
-            return me_send;
+            return me_sync;
 
         if (sigqueue(pid, SIGUSR1, (sigval_t)(i32data[i])) == -1)
             return me_send;
@@ -280,7 +321,7 @@ int message_receive(int fd, int type, size_t data_length, char **data)
     if (data == NULL)
     {
         errno = EINVAL;
-        return -1;
+        return me_invalid_args;
     }
 
     if (fd < 0)
@@ -312,7 +353,7 @@ int message_receive(int fd, int type, size_t data_length, char **data)
     printf("recv sem_locked: %i\n", sem_value);
 #endif
     if (sem_post(semaphore) == -1)
-        return -1;
+        return me_sync;
 
 #ifdef DEBUG
     sem_getvalue(semaphore, &sem_value);
@@ -334,7 +375,7 @@ int message_receive(int fd, int type, size_t data_length, char **data)
         return me_receive;
 
     if (sem_post(semaphore) == -1)
-        return -1;
+        return me_sync;
 
     if (pthread_join(sigwait_thread, &sigwait_status) != 0 || sigwait_status == -1)
     {
@@ -359,7 +400,7 @@ int message_receive(int fd, int type, size_t data_length, char **data)
             return me_receive;
 
         if (sem_post(semaphore) == -1)
-            return -1;
+            return me_sync;
 
         if (pthread_join(sigwait_thread, &sigwait_status) != 0 || sigwait_status == -1)
         {

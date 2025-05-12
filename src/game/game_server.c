@@ -14,8 +14,9 @@
 static void game_init(guess_number_t *game)
 {
     uint32_t seed = 0;
-    FILE* dev_random = fopen("/dev/random", "r");
-    if (dev_random) {
+    FILE *dev_random = fopen("/dev/random", "r");
+    if (dev_random)
+    {
         if (fread(&seed, sizeof(seed), 1, dev_random) != 1)
             seed = time(NULL);
 
@@ -40,10 +41,10 @@ int game_run_server(int serverfd, int clientfd, size_t max_tries)
     printf("%s Game initiated with range [%i; %i] and answer=%i\n",
            INFO, game.range.bottom, game.range.top, game.answer);
 
-    if (game_send_client_settings(clientfd, (game_client_settings_t*)&game) != me_success)
+    if (game_send_client_settings(clientfd, (game_client_settings_t *)&game) != me_success)
     {
         fprintf(stderr, "%s Sending range:\t%s\n", ERROR, strerror(errno));
-        return -1;
+        return 1;
     }
 
     do
@@ -53,7 +54,8 @@ int game_run_server(int serverfd, int clientfd, size_t max_tries)
         {
             fprintf(stderr, "%s Receiving client guess:\t%s\n",
                     WARNING, strerror(errno));
-            break;
+            return 2;
+            // break;
         }
 
         printf("%s Client guess is %i\n", INFO, game.guess);
@@ -67,8 +69,12 @@ int game_run_server(int serverfd, int clientfd, size_t max_tries)
         if (game_send_answer(clientfd, answer) != me_success)
         {
             fprintf(stderr, "%s Sending answer:\t%s\n", ERROR, strerror(errno));
-            break;
+            return 3;
+            // break;
         }
+
+        if (answer == a_right)
+            break;
     } while (--game.tries);
 
     if (!game.tries)

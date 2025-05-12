@@ -32,14 +32,14 @@ enum message_error_e
     me_bad_fd,
     me_send,
     me_receive,
-    me_peer_end
+    me_peer_end,
+    me_sync
 };
 
 int message_send(int fd, int type, size_t data_length, const char *data);
 
 int message_receive(int fd, int type, size_t data_length, char **data);
 
-// #ifndef PIPE2_MESSAGING
 int semaphore_init(const char *file, pid_t cpid);
 
 int semaphore_close(const char *file);
