@@ -1,3 +1,4 @@
+#include <time.h>
 #include <stdio.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -6,24 +7,51 @@
 #include <unistd.h>
 #include <signal.h>
 #include <string.h>
-#include <threads.h>
-#include <pthread.h>
 #include <semaphore.h>
 
 #include "game/protocol.h"
 
 static sem_t *semaphore = NULL;
+static sem_t *semaphore_pipe = NULL;
 static int semaphore_closed = 0;
+static int semaphore_pipe_closed = 0;
+
+#define SEMAPHORE_PIPE_POSTFIX "_pipe"
 
 int semaphore_init(const char *file, pid_t cpid)
 {
+#ifdef PIPE2_MESSAGING
+    char semaphore_pipe_name[FILENAME_MAX];
+    strncpy(semaphore_pipe_name, file, FILENAME_MAX);
+    strncat(semaphore_pipe_name, SEMAPHORE_PIPE_POSTFIX, FILENAME_MAX);
+#endif
+
+    if (cpid == 0)
+    {
+        if ((semaphore = sem_open(file, O_CREAT | O_RDWR)) == SEM_FAILED)
+            return -1;
+
+#ifdef PIPE2_MESSAGING
+        if ((semaphore_pipe = sem_open(semaphore_pipe_name, O_CREAT | O_RDWR)) == SEM_FAILED)
+            return -1;
+#endif
+
+        return 0;
+    }
+
     if ((semaphore = sem_open(file, O_CREAT | O_RDWR, 0644, 0)) == SEM_FAILED)
         return -1;
 
-    if (cpid)
-        if (sem_init(semaphore, 1, 0) == -1)
-            return -1;
+    if (sem_init(semaphore, 1, 0) == -1)
+        return -1;
 
+#ifdef PIPE2_MESSAGING
+    if ((semaphore_pipe = sem_open(semaphore_pipe_name, O_CREAT | O_RDWR, 0644, 0)) == SEM_FAILED)
+        return -1;
+
+    if (sem_init(semaphore_pipe, 1, 0) == -1)
+        return -1;
+#endif
     return 0;
 }
 
@@ -36,6 +64,19 @@ int semaphore_close(const char *file)
         sem_destroy(semaphore);
         semaphore_closed = 1;
     }
+#ifdef PIPE2_MESSAGING
+    if (semaphore_pipe_closed != 0)
+    {
+        char semaphore_pipe_name[FILENAME_MAX];
+        strncpy(semaphore_pipe_name, file, FILENAME_MAX);
+        strncat(semaphore_pipe_name, SEMAPHORE_PIPE_POSTFIX, FILENAME_MAX);
+        
+        sem_unlink(semaphore_pipe_name);
+        sem_close(semaphore_pipe);
+        sem_destroy(semaphore_pipe);
+        semaphore_pipe_closed = 1;
+    }
+#endif
 
     return 0;
 }
@@ -59,20 +100,12 @@ int message_send(int fd, int type, size_t data_length, const char *data)
 #ifdef DEBUG
     printf("message_send: type: %i, length: %lu, data: %p\n", message.type, message.length, message.body);
 #endif
-    // if (sem_wait(semaphore) == -1)
-    //     return me_sync;
 
     if (write(fd, &message, sizeof(message) - sizeof(message.body)) == -1)
         return me_send;
 
-    if (sem_post(semaphore) == -1)
-        return me_sync;
-
     if (data_length == 0)
         return me_success;
-
-    // if (sem_wait(semaphore) == -1)
-    //     return me_sync;
 
     if (write(fd, message.body, message.length) == -1)
         return me_send;
@@ -83,25 +116,18 @@ int message_send(int fd, int type, size_t data_length, const char *data)
 #ifdef DEBUG
     int sem_value = 0;
     sem_getvalue(semaphore, &sem_value);
-    printf("send sem_locked: %i\n", sem_value);
+    printf("send sem_unlocked: %i\n", sem_value);
+#endif
+
+    if (sem_wait(semaphore_pipe) == -1)
+        return me_sync;
+
+#ifdef DEBUG
+    sem_getvalue(semaphore_pipe, &sem_value);
+    printf("send sem_pipe_unlocked: %i\n", sem_value);
 #endif
 
     return me_success;
-}
-
-typedef struct
-{
-    int fd;
-    void *data;
-    size_t sz;
-    int err;
-} read_args_t;
-
-ssize_t thrd_read(read_args_t *args)
-{
-    ssize_t status = read(args->fd, args->data, args->sz);
-    args->err = errno;
-    return status;
 }
 
 int message_receive(int fd, int type, size_t data_length, char **data)
@@ -113,29 +139,18 @@ int message_receive(int fd, int type, size_t data_length, char **data)
     }
 
     ssize_t status = 0;
-    // int pthread_error = 0;
-    // pthread_t read_thread;
     net_message_t message = {0, 0, NULL};
 
-    // read_args_t args = {fd, &message, sizeof(message) - sizeof(message.body), 0};
-    // if ((pthread_error = pthread_create(&read_thread, NULL, &thrd_read, &args)) != 0)
-    // {
-    //     errno = pthread_error;
-    //     return me_receive;
-    // }
-
-    // if (sem_post(semaphore) == -1)
-    //     return me_sync;
-
-    // if (pthread_join(read_thread, &status) != 0 || status == -1)
-    // {
-    //     errno = args.err;
-    //     return me_receive;
-    // }
-    if (sem_wait(semaphore) == -1)
-        return me_sync;
 #ifdef DEBUG
     int sem_value = 0;
+    sem_getvalue(semaphore, &sem_value);
+    printf("receive sem_locked: %i\n", sem_value);
+#endif
+
+    if (sem_wait(semaphore) == -1)
+        return me_sync;
+
+#ifdef DEBUG
     sem_getvalue(semaphore, &sem_value);
     printf("receive sem_unlocked: %i\n", sem_value);
 #endif
@@ -163,41 +178,6 @@ int message_receive(int fd, int type, size_t data_length, char **data)
     if (message.body == NULL)
         return me_receive;
 
-    // args.data = message.body;
-    // args.sz = message.length;
-    // if ((pthread_error = pthread_create(&read_thread, NULL, &thrd_read, &args)) != 0)
-    // {
-    //     errno = pthread_error;
-    //     return me_receive;
-    // }
-
-    // if (sem_post(semaphore) == -1)
-    //     return me_sync;
-
-    // if (pthread_join(read_thread, &status) != 0 || status == -1)
-    // {
-    //     errno = args.err;
-    //     if (data_length == 0)
-    //         free(message.body);
-
-    //     return me_receive;
-    // }
-#ifdef DEBUG
-    sem_getvalue(semaphore, &sem_value);
-    printf("receive sem_locked: %i\n", sem_value);
-#endif
-    if (sem_wait(semaphore) == -1)
-    {
-        if (data_length == 0)
-            free(message.body);
-
-        return me_sync;
-    }
-#ifdef DEBUG
-    sem_getvalue(semaphore, &sem_value);
-    printf("receive sem_unlocked: %i\n", sem_value);
-#endif
-
     if ((status = read(fd, message.body, message.length)) == -1)
     {
         if (data_length == 0)
@@ -217,6 +197,18 @@ int message_receive(int fd, int type, size_t data_length, char **data)
 
         return me_peer_end;
     }
+
+    if (sem_post(semaphore_pipe) == -1)
+    {
+        if (data_length == 0)
+            free(message.body);
+
+        return me_sync;
+    }
+#ifdef DEBUG
+    sem_getvalue(semaphore_pipe, &sem_value);
+    printf("receive sem_pipe_unlocked: %i\n", sem_value);
+#endif
 
     *data = message.body;
     return me_success;
