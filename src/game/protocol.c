@@ -7,6 +7,7 @@
 #include <unistd.h>
 #include <signal.h>
 #include <string.h>
+#include <pthread.h>
 #include <semaphore.h>
 
 #include "game/protocol.h"
