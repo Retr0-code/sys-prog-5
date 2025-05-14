@@ -40,9 +40,9 @@ int message_send(int fd, int type, size_t data_length, const char *data);
 
 int message_receive(int fd, int type, size_t data_length, char **data);
 
-int semaphore_init(const char *file, pid_t cpid);
+int semaphore_init(pid_t cpid);
 
-int semaphore_close(const char *file);
+void semaphore_close(void);
 #ifndef PIPE2_MESSAGING
 
 int sigset_init(void);

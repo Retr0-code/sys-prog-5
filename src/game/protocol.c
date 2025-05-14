@@ -11,79 +11,80 @@
 
 #include "game/protocol.h"
 
+#define SEMAPHORE_NAME "/guess_num_game"
+#define SEMAPHORE_PIPE_READ (SEMAPHORE_NAME "_pipe_read")
+#define SEMAPHORE_PIPE_WRITE (SEMAPHORE_NAME "_pipe_write")
+
 static sem_t *semaphore = NULL;
-static sem_t *semaphore_pipe = NULL;
+static sem_t *semaphore_pipe_read = NULL;
+static sem_t *semaphore_pipe_write = NULL;
 static int semaphore_closed = 0;
-static int semaphore_pipe_closed = 0;
 
-#define SEMAPHORE_PIPE_POSTFIX "_pipe"
-
-int semaphore_init(const char *file, pid_t cpid)
+int semaphore_init_back(const char *file, pid_t cpid, sem_t **sem)
 {
-#ifdef PIPE2_MESSAGING
-    char semaphore_pipe_name[FILENAME_MAX];
-    strncpy(semaphore_pipe_name, file, FILENAME_MAX);
-    strncat(semaphore_pipe_name, SEMAPHORE_PIPE_POSTFIX, FILENAME_MAX);
-#endif
-
     if (cpid == 0)
     {
-        if ((semaphore = sem_open(file, O_CREAT | O_RDWR)) == SEM_FAILED)
+        if ((*sem = sem_open(file, O_CREAT | O_RDWR)) == SEM_FAILED)
             return -1;
-
-#ifdef PIPE2_MESSAGING
-        if ((semaphore_pipe = sem_open(semaphore_pipe_name, O_CREAT | O_RDWR)) == SEM_FAILED)
-            return -1;
-#endif
 
         return 0;
     }
 
-    if ((semaphore = sem_open(file, O_CREAT | O_RDWR, 0644, 0)) == SEM_FAILED)
+    if ((*sem = sem_open(file, O_CREAT | O_RDWR, 0644, 0)) == SEM_FAILED)
         return -1;
 
-    if (sem_init(semaphore, 1, 0) == -1)
+    if (sem_init(*sem, 1, 0) == -1)
         return -1;
 
-#ifdef PIPE2_MESSAGING
-    if ((semaphore_pipe = sem_open(semaphore_pipe_name, O_CREAT | O_RDWR, 0644, 0)) == SEM_FAILED)
-        return -1;
-
-    if (sem_init(semaphore_pipe, 1, 0) == -1)
-        return -1;
-#endif
     return 0;
 }
 
-int semaphore_close(const char *file)
+int semaphore_init(pid_t cpid)
 {
-    if (semaphore_closed != 0)
+    if (semaphore_init_back(SEMAPHORE_NAME, cpid, &semaphore) == -1)
+        return -1;
+
+#ifdef PIPE2_MESSAGING
+    if (semaphore_init_back(SEMAPHORE_PIPE_READ, cpid, &semaphore_pipe_read) == -1)
+        return -1;
+
+    if (semaphore_init_back(SEMAPHORE_PIPE_WRITE, cpid, &semaphore_pipe_write) == -1)
+        return -1;
+#endif
+}
+
+static void semaphore_close_back(const char *file, sem_t *sem)
+{
+    if (semaphore_closed == 0)
     {
         sem_unlink(file);
-        sem_close(semaphore);
-        sem_destroy(semaphore);
+        sem_close(sem);
+        sem_destroy(sem);
         semaphore_closed = 1;
     }
-#ifdef PIPE2_MESSAGING
-    if (semaphore_pipe_closed != 0)
-    {
-        char semaphore_pipe_name[FILENAME_MAX];
-        strncpy(semaphore_pipe_name, file, FILENAME_MAX);
-        strncat(semaphore_pipe_name, SEMAPHORE_PIPE_POSTFIX, FILENAME_MAX);
-        
-        sem_unlink(semaphore_pipe_name);
-        sem_close(semaphore_pipe);
-        sem_destroy(semaphore_pipe);
-        semaphore_pipe_closed = 1;
-    }
-#endif
+}
 
-    return 0;
+void semaphore_close(void)
+{
+    semaphore_close_back(SEMAPHORE_NAME, semaphore);
+#ifdef PIPE2_MESSAGING
+    semaphore_close_back(SEMAPHORE_PIPE_READ, semaphore_pipe_read);
+    semaphore_close_back(SEMAPHORE_PIPE_WRITE, semaphore_pipe_write);
+#endif
 }
 
 #ifdef PIPE2_MESSAGING
 int message_send(int fd, int type, size_t data_length, const char *data)
 {
+#ifdef DEBUG
+    int sem_value = 0;
+    sem_getvalue(semaphore, &sem_value);
+    printf("send sem_locked: %i\n", sem_value);
+
+    sem_getvalue(semaphore_pipe_read, &sem_value);
+    printf("send sem_pipe_locked: %i\n", sem_value);
+#endif
+
     if (data_length == 0 && data != NULL || data_length != 0 && data == NULL)
     {
         errno = EINVAL;
@@ -113,25 +114,26 @@ int message_send(int fd, int type, size_t data_length, const char *data)
     if (sem_post(semaphore) == -1)
         return me_sync;
 
-#ifdef DEBUG
-    int sem_value = 0;
-    sem_getvalue(semaphore, &sem_value);
-    printf("send sem_unlocked: %i\n", sem_value);
-#endif
-
-    if (sem_wait(semaphore_pipe) == -1)
+    if (sem_wait(semaphore_pipe_read) == -1)
         return me_sync;
 
-#ifdef DEBUG
-    sem_getvalue(semaphore_pipe, &sem_value);
-    printf("send sem_pipe_unlocked: %i\n", sem_value);
-#endif
+    if (sem_post(semaphore_pipe_write) == -1)
+        return me_sync;
 
     return me_success;
 }
 
 int message_receive(int fd, int type, size_t data_length, char **data)
 {
+#ifdef DEBUG
+    int sem_value = 0;
+    sem_getvalue(semaphore, &sem_value);
+    printf("receive sem_locked: %i\n", sem_value);
+
+    sem_getvalue(semaphore_pipe_read, &sem_value);
+    printf("receive sem_pipe_locked: %i\n", sem_value);
+#endif
+
     if (fd <= 0)
     {
         errno = EBADF;
@@ -141,19 +143,8 @@ int message_receive(int fd, int type, size_t data_length, char **data)
     ssize_t status = 0;
     net_message_t message = {0, 0, NULL};
 
-#ifdef DEBUG
-    int sem_value = 0;
-    sem_getvalue(semaphore, &sem_value);
-    printf("receive sem_locked: %i\n", sem_value);
-#endif
-
     if (sem_wait(semaphore) == -1)
         return me_sync;
-
-#ifdef DEBUG
-    sem_getvalue(semaphore, &sem_value);
-    printf("receive sem_unlocked: %i\n", sem_value);
-#endif
 
     if ((status = read(fd, &message, sizeof(message) - sizeof(message.body))) == -1)
         return me_receive;
@@ -198,17 +189,16 @@ int message_receive(int fd, int type, size_t data_length, char **data)
         return me_peer_end;
     }
 
-    if (sem_post(semaphore_pipe) == -1)
+    if (sem_post(semaphore_pipe_read) == -1)
     {
         if (data_length == 0)
             free(message.body);
 
         return me_sync;
     }
-#ifdef DEBUG
-    sem_getvalue(semaphore_pipe, &sem_value);
-    printf("receive sem_pipe_unlocked: %i\n", sem_value);
-#endif
+
+    if (sem_wait(semaphore_pipe_write) == -1)
+        return me_sync;
 
     *data = message.body;
     return me_success;
