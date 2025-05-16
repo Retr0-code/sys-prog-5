@@ -93,13 +93,17 @@ int game_run_server(int serverfd, int clientfd, size_t max_tries, game_stats_t *
     if (!game.tries)
         printf("%s Client exceeded amount of tries\n", INFO);
 
-    stats->server = answer == a_right;
+    stats->server = (answer != a_right);
     if (stats->server)
+    {
         stats->client = 0;
+        stats->tries = max_tries - game.tries;
+    }
     else
+    {
         stats->client = 1;
-
-    stats->tries = max_tries - game.tries;
+        stats->tries = max_tries - game.tries + 1;
+    }
 
     return 0;
 }

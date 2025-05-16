@@ -105,6 +105,7 @@ int game_run_client(int serverfd, int clientfd, size_t max_tries, game_stats_t *
                 printf("%i is right answer\n", guess);
                 stats->client = 1;
                 stats->server = 0;
+                stats->tries = max_tries - game_settings.tries + 1;
                 break;
             }
 
@@ -128,8 +129,8 @@ int game_run_client(int serverfd, int clientfd, size_t max_tries, game_stats_t *
     {
         stats->client = 0;
         stats->server = 1;
+        stats->tries = max_tries - game_settings.tries;
     }
-    stats->tries = max_tries - game_settings.tries;
 
     last_guess.bottom = 0;
     last_guess.top = 0;
