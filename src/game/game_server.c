@@ -11,8 +11,18 @@
 #define MIN_RANGE 3
 #define MAX_RANGE (20 - MIN_RANGE + 1)
 
+static int top_limit = 0;
+
 static void game_init(guess_number_t *game)
 {
+    if (top_limit > 0)
+    {
+        game->range.bottom = 1;
+        game->range.top = top_limit;
+        game->answer = game->range.bottom + rand() % (game->range.top - game->range.bottom + 1);
+        return;
+    }
+
     uint32_t seed = 0;
     FILE *dev_random = fopen("/dev/random", "r");
     if (dev_random)
@@ -32,7 +42,12 @@ static void game_init(guess_number_t *game)
     game->answer = game->range.bottom + rand() % (game->range.top - game->range.bottom + 1);
 }
 
-int game_run_server(int serverfd, int clientfd, size_t max_tries)
+void game_set_top_limit(int max)
+{
+    top_limit = max;
+}
+
+int game_run_server(int serverfd, int clientfd, size_t max_tries, game_stats_t *stats)
 {
     guess_number_t game;
 
@@ -47,6 +62,7 @@ int game_run_server(int serverfd, int clientfd, size_t max_tries)
         return 1;
     }
 
+    int answer = a_right;
     do
     {
         printf("%s Client try #%li\n", INFO, max_tries - game.tries + 1);
@@ -55,12 +71,10 @@ int game_run_server(int serverfd, int clientfd, size_t max_tries)
             fprintf(stderr, "%s Receiving client guess:\t%s\n",
                     WARNING, strerror(errno));
             return 2;
-            // break;
         }
 
         printf("%s Client guess is %i\n", INFO, game.guess);
 
-        int answer = a_right;
         if (game.guess - game.answer > 0)
             answer = a_more;
         else
@@ -70,7 +84,6 @@ int game_run_server(int serverfd, int clientfd, size_t max_tries)
         {
             fprintf(stderr, "%s Sending answer:\t%s\n", ERROR, strerror(errno));
             return 3;
-            // break;
         }
 
         if (answer == a_right)
@@ -79,6 +92,14 @@ int game_run_server(int serverfd, int clientfd, size_t max_tries)
 
     if (!game.tries)
         printf("%s Client exceeded amount of tries\n", INFO);
+
+    stats->server = answer == a_right;
+    if (stats->server)
+        stats->client = 0;
+    else
+        stats->client = 1;
+
+    stats->tries = max_tries - game.tries;
 
     return 0;
 }

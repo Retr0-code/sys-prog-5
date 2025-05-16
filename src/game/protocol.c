@@ -17,8 +17,10 @@
 #define SEMAPHORE_PIPE_WRITE (SEMAPHORE_NAME "_pipe_write")
 
 static sem_t *semaphore = NULL;
+#ifdef PIPE2_MESSAGING
 static sem_t *semaphore_pipe_read = NULL;
 static sem_t *semaphore_pipe_write = NULL;
+#endif
 static int semaphore_closed = 0;
 
 int semaphore_init_back(const char *file, pid_t cpid, sem_t **sem)
@@ -52,6 +54,8 @@ int semaphore_init(pid_t cpid)
     if (semaphore_init_back(SEMAPHORE_PIPE_WRITE, cpid, &semaphore_pipe_write) == -1)
         return -1;
 #endif
+    
+    return 0;
 }
 
 static void semaphore_close_back(const char *file, sem_t *sem)

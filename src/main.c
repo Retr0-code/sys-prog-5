@@ -11,7 +11,6 @@
 #include "game/game.h"
 
 #define MAX_ATTEMPTS 5
-#define MAX_CYCLES 10
 #define GAME_ROUNDS 10
 
 #ifdef PIPE2_MESSAGING
@@ -28,7 +27,7 @@ void graceful_stop(int singal)
     exit(0);
 }
 
-typedef int (*game_role_t)(pid_t, pid_t, size_t);
+typedef int (*game_role_t)(pid_t, pid_t, size_t, game_stats_t *);
 #ifdef PIPE2_MESSAGING
 game_role_t game_role_swap(game_role_t current_role, uint8_t *index1, uint8_t *index2)
 #else
@@ -58,9 +57,9 @@ void signals_add_handlers(void)
 
 int main(int argc, char **argv)
 {
-    if (argc < 3)
+    if (argc < 4)
     {
-        printf("Usage: %s <max attempts> <cycles>\n", argv[0]);
+        printf("Usage: %s <max attempts> <cycles> <top limit>\n", argv[0]);
         return -1;
     }
 
@@ -74,9 +73,17 @@ int main(int argc, char **argv)
     size_t cycles = 0;
     if ((cycles = atoi(argv[2])) < 0)
     {
-        printf("%s Using default value for cycles (%i)\n", WARNING, MAX_CYCLES);
-        cycles = MAX_CYCLES;
+        printf("%s Using default value for cycles (%i)\n", WARNING, GAME_ROUNDS);
+        cycles = GAME_ROUNDS;
     }
+
+    int top_limit = 0;
+    if ((top_limit = atoi(argv[3])) <= 0)
+    {
+        printf("%s Using randomly generated range\n", WARNING);
+        cycles = GAME_ROUNDS;
+    }
+    game_set_top_limit(top_limit);
 
     game_role_t role = &game_run_server;
 #ifndef PIPE2_MESSAGING
@@ -92,6 +99,7 @@ int main(int argc, char **argv)
 #endif
 
     pid_t cpid = fork();
+    int is_parent = cpid;
     switch (cpid)
     {
     case -1:
@@ -119,11 +127,27 @@ int main(int argc, char **argv)
         printf("%s cycle: %lu, role: %s\n", cpid ? "parent" : "child", i,
                role == &game_run_server ? "server" : "client");
 #endif
+
+        game_stats_t statistics = {0, 0, 0};
+
 #ifdef PIPE2_MESSAGING
-        (*role)(pipefd[pipe_read_index], pipefd[pipe_write_index], max_attempts);
+        (*role)(pipefd[pipe_read_index], pipefd[pipe_write_index], max_attempts, &statistics);
+#else
+        (*role)(ppid, cpid, max_attempts, &statistics);
+#endif
+        if (is_parent)
+        {
+            printf("---- Round %li----\n", i + 1);
+            printf("Host (%s): %s\nPlayer (%s): %s\nAttempts made: %li/%li\n",
+                   role == &game_run_server ? "parent" : "child",
+                   statistics.server ? "Won" : "Lost",
+                   role == &game_run_server ? "child" : "parent",
+                   statistics.client ? "Won" : "Lost",
+                   statistics.tries, max_attempts);
+        }
+#ifdef PIPE2_MESSAGING
         role = game_role_swap(role, &pipe_read_index, &pipe_write_index);
 #else
-        (*role)(ppid, cpid, max_attempts);
         role = game_role_swap(role, &ppid, &cpid);
 #endif
     }

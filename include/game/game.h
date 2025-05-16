@@ -23,6 +23,13 @@ typedef struct
     int     guess;
 } guess_number_t;
 
+typedef struct
+{
+    size_t tries;
+    int    client;
+    int    server;
+} game_stats_t;
+
 int game_send_client_settings(int client_fd, const game_client_settings_t *settings);
 
 int game_receive_client_settings(int client_fd, game_client_settings_t *settings);

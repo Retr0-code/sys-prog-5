@@ -67,7 +67,7 @@ static void print_receiver_errors(int status)
     }
 }
 
-int game_run_client(int serverfd, int clientfd, size_t max_tries)
+int game_run_client(int serverfd, int clientfd, size_t max_tries, game_stats_t *stats)
 {
     game_client_settings_t game_settings;
     int guess = 0;
@@ -103,6 +103,8 @@ int game_run_client(int serverfd, int clientfd, size_t max_tries)
             if (a_right == answer)
             {
                 printf("%i is right answer\n", guess);
+                stats->client = 1;
+                stats->server = 0;
                 break;
             }
 
@@ -122,6 +124,12 @@ int game_run_client(int serverfd, int clientfd, size_t max_tries)
         } while (--game_settings.tries);
         break;
     }
+    if (a_right != answer)
+    {
+        stats->client = 0;
+        stats->server = 1;
+    }
+    stats->tries = max_tries - game_settings.tries;
 
     last_guess.bottom = 0;
     last_guess.top = 0;
